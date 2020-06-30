@@ -25,12 +25,37 @@ SP500_BTC_db_entry = {}
 def db_insertion(json_to_insert):
     
     cur.execute(sql % (json_to_insert["timestamp"], json_to_insert["BTC_value"], json_to_insert["SP500_value"]))
-    conn.commit()
-    print(json_to_insert["timestamp"])
-    
+    conn.commit()    
 
 SP500 = [json.loads(r.blpop(SP500_list)[1].decode('utf8'))]
 BTC = [json.loads(r.blpop(BTC_list)[1].decode('utf8'))]
+
+last_SP500 = r.blpop(SP500_list)
+last_SP500 = last_SP500[1].decode('utf8')
+last_SP500 = json.loads(last_SP500)
+last_BTC = r.blpop(BTC_list)
+last_BTC = last_BTC[1].decode('utf8')
+last_BTC = json.loads(last_BTC)
+ 
+def sinc(BTC, SP500, last_BTC, last_SP500):    
+    
+    while (BTC[-1]["timestamp"] < SP500[-1]["timestamp"] and last_BTC["timestamp"] < SP500[-1]["timestamp"]) or (SP500[-1]["timestamp"] < BTC[-1]["timestamp"] and last_SP500["timestamp"] < BTC[-1]["timestamp"]):
+    
+        if BTC[-1]["timestamp"] < SP500[-1]["timestamp"] and last_BTC["timestamp"] < SP500[-1]["timestamp"]:
+        
+            BTC = [last_BTC]
+            last_BTC = r.blpop(BTC_list)
+            last_BTC = last_BTC[1].decode('utf8')
+            last_BTC = json.loads(last_BTC)
+    
+        else:
+        
+            SP500 = [last_SP500]
+            last_SP500 = r.blpop(SP500_list)
+            last_SP500 = last_SP500[1].decode('utf8')
+            last_SP500 = json.loads(last_SP500)
+        
+    return ([last_BTC], [last_SP500])
     
 while True:
     
@@ -41,24 +66,48 @@ while True:
     last_BTC = last_BTC[1].decode('utf8')
     last_BTC = json.loads(last_BTC)
     
+    if (BTC[-1]["timestamp"] < SP500[-1]["timestamp"] and last_BTC["timestamp"] < SP500[-1]["timestamp"]) or (SP500[-1]["timestamp"] < BTC[-1]["timestamp"] and last_SP500["timestamp"] < BTC[-1]["timestamp"]):
+        
+        x = sinc(BTC, SP500, last_BTC, last_SP500)
+        BTC = x[0]
+        SP500 = x[1]
+    
     if last_BTC["BTC_value"] != BTC[-1]["BTC_value"]:
         
         SP500.append(last_SP500)
         min = 0
         
         for pos, obj in enumerate(SP500):
-            if obj["timestamp"] - last_BTC["timestamp"] < SP500[min]["timestamp"] - last_BTC["timestamp"]:
+            if abs(obj["timestamp"] - last_BTC["timestamp"]) < abs(SP500[min]["timestamp"] - last_BTC["timestamp"]):
                 min = pos
+                
+        while abs(last_BTC["timestamp"] - last_SP500["timestamp"]) <= abs(SP500[min]["timestamp"] - last_BTC["timestamp"]):
+            
+            last_SP500 = r.blpop(SP500_list)
+            last_SP500 = last_SP500[1].decode('utf8')
+            last_SP500 = json.loads(last_SP500)
+            
+            if abs(last_BTC["timestamp"] - last_SP500["timestamp"]) <= abs(SP500[-1]["timestamp"] - last_BTC["timestamp"]):
+                
+                min = len(SP500)
+                SP500.append(last_SP500)
+            
+        r.lpush("SP500", json.dumps(last_SP500))
         
-        SP500_BTC_db_entry = {
-            "timestamp": last_BTC["timestamp"],
-            "BTC_value": last_BTC["BTC_value"],
-            "SP500_value": SP500[min]["SP500_value"]
-        }
+        if abs(SP500[min]["timestamp"] - last_BTC["timestamp"] < 1):
+            
+            SP500_BTC_db_entry = {
+                "timestamp": last_BTC["timestamp"],
+                "BTC_value": last_BTC["BTC_value"],
+                "SP500_value": SP500[min]["SP500_value"]
+            }
+            
+            print(SP500[min]["timestamp"])
+            print(last_BTC["timestamp"])
         
-        db_insertion(SP500_BTC_db_entry)
+            db_insertion(SP500_BTC_db_entry)
 
-        SP500 = [last_SP500]
+        SP500 = [SP500[-1]]
         BTC = [last_BTC]
         
     elif last_SP500["SP500_value"] != SP500[-1]["SP500_value"]:
@@ -69,17 +118,35 @@ while True:
         for pos, obj in enumerate(BTC):
             if obj["timestamp"] - last_SP500["timestamp"] < BTC[min]["timestamp"] - last_SP500["timestamp"]:
                 min = pos
+           
+        while abs(last_BTC["timestamp"] - last_SP500["timestamp"]) <= abs(BTC[min]["timestamp"] - last_SP500["timestamp"]):
+            
+            last_BTC = r.blpop(BTC_list)
+            last_BTC = last_BTC[1].decode('utf8')
+            last_BTC = json.loads(last_BTC)
+            
+            if abs(last_BTC["timestamp"] - last_SP500["timestamp"]) <= abs(BTC[-1]["timestamp"] - last_SP500["timestamp"]):
                 
-        SP500_BTC_db_entry = {
-            "timestamp": last_SP500["timestamp"],
-            "BTC_value": BTC[min]["BTC_value"],
-            "SP500_value": last_SP500["SP500_value"]
-        }
+                min = len(BTC)
+                BTC.append(last_BTC)
+            
+        r.lpush("BTC", json.dumps(last_BTC))
         
-        db_insertion(SP500_BTC_db_entry)
+        if abs(BTC[min]["timestamp"] - last_SP500["timestamp"] < 1):
+        
+            SP500_BTC_db_entry = {
+                "timestamp": last_SP500["timestamp"],
+                "BTC_value": BTC[min]["BTC_value"],
+                "SP500_value": last_SP500["SP500_value"]
+            }
+            
+            print(last_SP500["timestamp"])
+            print(BTC[min]["timestamp"])
+        
+            db_insertion(SP500_BTC_db_entry)
         
         SP500 = [last_SP500]
-        BTC = [last_BTC]
+        BTC = [BTC[-1]]
         
     else:
         
